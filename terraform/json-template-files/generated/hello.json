@@ -1,0 +1,14 @@
+{
+  "variable": {
+    "example": {
+      "default": "<html>
+    <head></head>
+    <body>Hello</body>
+</html>",
+      "mystring": "myvalue"
+    }
+  }
+}
+
+
+  
