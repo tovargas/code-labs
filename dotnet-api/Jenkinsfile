@@ -1,0 +1,77 @@
+pipeline {
+
+    agent any
+
+    environment {
+        HOST_WORKSPACE = sh(script: "echo $WORKSPACE | awk -v old=$JENKINS_HOME -v new=$JENKINS_HOME_HOST '{gsub(old,new)}1'", , returnStdout: true).trim()
+        PROJ_DIR = 'dotnet-api' 
+        DOCKER_IMAGE = 'dotnet-myapi'
+        DOCKER_IMAGE_TAG_VERSION = 'latest'
+    }
+
+    stages {
+        stage('Build') {
+            steps {
+                sh '''
+                    docker run --rm -v $HOST_WORKSPACE/$PROJ_DIR:/app -w /app mcr.microsoft.com/dotnet/sdk:6.0-alpine \
+                        dotnet build
+                    '''
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh '''
+                    docker run --rm -v $HOST_WORKSPACE/$PROJ_DIR:/app -w /app mcr.microsoft.com/dotnet/sdk:6.0-alpine \
+                        dotnet test
+                    '''
+            }
+        }
+
+        stage ("Archive Artifacts") {
+            steps { 
+                sh '''
+                    docker run --rm -v $HOST_WORKSPACE/$PROJ_DIR:/app -w /app javieraviles/zip:latest /bin/sh \
+                        -c "mkdir -p temp ; zip -r temp/dotnet-api-${BUILD_NUMBER}.zip ./MyApi/bin"
+                '''
+            }
+
+            post {
+                success {
+                   archiveArtifacts artifacts: 'dotnet-api/temp/dotnet-api-*.zip', fingerprint: true
+                }
+            }
+        }
+
+        stage('Build Image') {
+            steps {
+                sh '''
+                    docker build -t $DOCKER_IMAGE:$DOCKER_IMAGE_TAG_VERSION --no-cache ./$PROJ_DIR
+                    '''
+            }
+        }
+
+        stage('Push Image to DockerHub') {
+            environment {
+               DOCKER_HUB_REGISTRY_CREDS = credentials('vargasdev_dockerhub_credentials')
+            }
+            steps {
+                sh '''
+                    docker login -u $DOCKER_HUB_REGISTRY_CREDS_USR -p $DOCKER_HUB_REGISTRY_CREDS_PSW
+                    docker tag $DOCKER_IMAGE:$DOCKER_IMAGE_TAG_VERSION vargasdev/$DOCKER_IMAGE:$DOCKER_IMAGE_TAG_VERSION
+                    docker push vargasdev/$DOCKER_IMAGE:$DOCKER_IMAGE_TAG_VERSION
+                    '''
+            }
+        }
+
+        stage('Deploy on Docker Host') {
+            when {
+                branch "master"
+                expression {currentBuild.currentResult != 'UNSTABLE'}
+            }
+            steps {
+                sh 'docker run -d -p 8081:80 --name $DOCKER_IMAGE-app1 vargasdev/$DOCKER_IMAGE:$DOCKER_IMAGE_TAG_VERSION'
+            }
+        }
+    }
+}
